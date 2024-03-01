@@ -1,221 +1,152 @@
 from credal_joint import CredalJoint
-import tqdm
 import numpy as np
-
-class Node():
-    """
-    Node class for the decision tree. A node can either be a leaf node or a decision node.
-    A decision node is defined by a feature and values associated with that feature.
-    A leaf node is defined by a class label.
-
-    ...
-
-    Attributes
-    ----------
-    feature : int
-        The feature associated with the node.
-    children : dict
-        Dictionary containing the children of the node.
-    label : int
-        The class label if node is a leaf node.
-    """
-
-    def __init__(self, credal_joint:CredalJoint, target:int, lower_ig:bool, threshold) -> None:
-        self.lower_ig = lower_ig
-        self.threshold = threshold
-        self.target = target
-        self.credal_joint = credal_joint
-        self.feature, self.ig = self.best_split( self.iig_all(credal_joint) )
-        self.children = []
-        self.label = None
-        self.create_children(threshold)
-    
-    def iig_all(self, joint_credal:CredalJoint) -> dict:
-        """
-        Returns the interval information gain of all the variables in the data.
-
-            Parameters:
-                data (np.ndarray): The data.
-                target (int): The index of the target column.
-                joint_feature_space (np.ndarray): The joint feature space.
-                s (int): The Imprecise Dirichlet Model parameter.
-
-            Returns:
-                var (dict): The interval information gain of all the variables in the data.
-        """
-        var_iig = {}
-        for var in range(joint_credal.joint_feature_space.shape[1]):
-            if var == self.target:
-                continue
-            else:
-                var_iig[str(var)] = joint_credal.interval_ig(self.target, var)
-        return var_iig
-    
-    def best_split_max(self, var_ig_pairs:dict) -> tuple[int, float]:
-            """
-            Returns the variable with that maximizes the upper estimates for information gain.
-
-                Parameters:
-                    var_ig_pairs (dict): The interval information gain of all the variables in the data.
-
-                Returns:
-                    best_var, max_ig (tuple): The variable with the maximum upper estimate information gain and the estimated information gain.
-            """
-            max_ig = -float('inf')	
-            best_var = None
-            for var in var_ig_pairs.keys():
-                if var_ig_pairs[var][1] > max_ig:
-                    max_ig = var_ig_pairs[var][1]
-                    best_var = var
-            return best_var, max_ig
-    
-    def best_split_min(self, var_ig_pairs:dict) -> tuple[int, float]:
-        """
-        Returns the variable with that minimizes the lower estimates for information gain.
-
-            Parameters:
-                var_ig_pairs (dict): The interval information gain of all the variables in the data.
-
-            Returns:
-                best_var, min_ig (tuple): The variable with the minimum lower estimate information gain and the estimated information gain.
-        """
-        min_ig = -float('inf')	
-        best_var = None
-        for var in var_ig_pairs.keys():
-            if var_ig_pairs[var][0] > min_ig:
-                min_ig = var_ig_pairs[var][0]
-                best_var = var
-        return best_var, min_ig
-    
-    def best_split(self, var_ig_pairs:dict) -> dict:
-        """
-        Return the best split for the given data.
-
-        Parameters:
-            data (np.ndarray): The data to split.
-            target (int): The index of the target column.
-            max_entropy (bool): If True, the split is based on the maximum entropy of the joint.
-            joint_feature_space (np.ndarray): The joint feature space.
-            s (int): The Imprecise Dirichlet Model parameter.
-        
-        Returns:
-            dict: The best split.
-        """
-        if self.lower_ig:
-            best_var, ig = self.best_split_min(var_ig_pairs)
-        else:
-            best_var, ig = self.best_split_max(var_ig_pairs)
-        return int(best_var), ig
-    
-    def majority_class_max(self) -> int:
-        """
-        Returns the majority class of the data.
-
-        Parameters:
-            data (np.ndarray): The data.
-            target (int): The index of the target column.
-            joint_feature_space (np.ndarray): The joint feature space.
-            s (int): The Imprecise Dirichlet Model parameter.
-        
-        Returns:
-            int: The majority class of the data.
-        """
-        marginal = self.credal_joint.marginal(self.target, True)
-        return np.argmax(marginal)
-
-    def majority_class_min(self) -> int:
-        """
-        Returns the majority class of the data.
-
-        Parameters:
-            data (np.ndarray): The data.
-            target (int): The index of the target column.
-            joint_feature_space (np.ndarray): The joint feature space.
-            s (int): The Imprecise Dirichlet Model parameter.
-        
-        Returns:
-            int: The majority class of the data.
-        """
-        marginal = self.credal_joint.marginal(self.target, False)
-        return np.argmax(marginal)
-    
-    def majority_class(self) -> int:
-        """
-        Returns the majority class of the data.
-
-        Parameters:
-            data (np.ndarray): The data.
-            target (int): The index of the target column.
-            joint_feature_space (np.ndarray): The joint feature space.
-            s (int): The Imprecise Dirichlet Model parameter.
-            max_entropy (bool): If True, the majority class is based on the maximum entropy of the joint.
-        
-        Returns:
-            int: The majority class of the data.
-        """
-        if self.lower_ig:
-            return self.majority_class_max()
-        else:
-            return self.majority_class_min()
-    
-    def create_children(self, threshold:float):
-        """
-        """
-        if self.ig < threshold:
-            self.label = self.majority_class()
-        else:
-            values = np.unique(self.credal_joint.joint_feature_space[:,self.feature])
-            for v in values:
-                credal_joint_child = self.credal_joint.cond_jc(self.feature, v)
-                child_node = Node(credal_joint_child, self.target - 1, self.lower_ig, self.threshold)
-                child_node.create_children(threshold)
-                self.children.append(child_node)
+from graphs import Node
+import numpy as np
 
 class DecisionTree():
     """
-    Class for the decision tree.
+    A class to represent a decision tree capable of handling imprecise data and missing values.
+    The decision tree is built using the Imprecise Dirichlet Model and credal sets.
 
     ...
 
-    Attributes
-    ----------
-    root : Node
-        The root node of the decision tree.
-    max_entropy : bool
-        If True, the split is based on the maximum entropy of the joint.
+    Attributes:
+        s : int 
+            The Imprecise Dirichlet Model parameter.
+        data : np.ndarray: 
+            The data.
+        max_iter : int: 
+            The maximum number of iterations for the optimization procedure to estimate the joints.
+        base : int 
+            The base utilized in the entropy function.
+        root : Node: 
+            The root node of the decision tree.
     
-    Methods
-    -------
-    predict(sample:np.ndarray) -> int
-        Predicts the class label of a given sample.
+    Methods:
+        best_split(credal_joint:CredalJoint) -> np.ndarray
+            Returns the best split based on the credal joint.
+        partition(data:np.ndarray, feature:int, value:int) -> np.ndarray
+            Partitions the data based on a feature and value.
+        majority_class(data:np.ndarray) -> int
+            Returns the majority class of the data.
+        build_tree(data:np.ndarray, root:Node=None, credal_joint:np.ndarray=None) -> Node 
+            Builds the decision tree.
+        predict_single(node:Node, sample:np.ndarray) -> int
+            Predicts the class label of a given sample.
+        predict(node:Node, samples:np.ndarray) -> np.ndarray
+            Predicts the class labels of given samples.
+        get_depth(node:Node=None) -> int
+            Returns the depth of the decision tree.
     """
-
-    def __init__(self, lower_ig:bool, s:int, data:np.ndarray, joint_feature_space:np.ndarray, max_iter:int, base:int, threshold) -> None:
-        self.lower_ig = lower_ig
-        self.threshold = threshold
+    def __init__(self, s:int, max_iter:int, base:int, index_continous:list, n_cat:int) -> None:
         self.s = s
         self.max_iter = max_iter
         self.base = base
-        self.credal_joint = CredalJoint(data, joint_feature_space, self.s, self.max_iter, self.base)
-        self.target = joint_feature_space.shape[1] - 1
-        self.root = self.build_tree()
-        
-    def build_tree(self, root:Node=None) -> None:
+        self.index_continous = index_continous
+        self.n_cat = n_cat
+        self.root = None
+     
+    def best_split(self, credal_joint:CredalJoint) -> np.ndarray:
         """
-        Builds a decision tree from the given data.
+        Returns the best split based on the credal joint.
+
+            Parameters:
+                credal_joint (CredalJoint): The credal joint.
+
+            Returns:
+                np.ndarray: The best split based on the credal joint.
+        """
+        iig = credal_joint.all_interval_ig()
+        best_lower_bound = max(iig.values(), key=lambda x: x[0])
+        best_features = [key for key, value in iig.items() if value >= best_lower_bound]
+        return best_features
+    
+    def partition(self, data:np.ndarray, feature:int, value:int) -> np.ndarray:
+        """
+        Partitions the data based on a feature and value.
+
+            Parameters:
+                data (np.ndarray): The data.
+                feature (int): The index of the feature.
+                value (int): The value of the feature.
+
+            Returns:
+                np.ndarray: The partitioned data.
+        """
+        return data[data[:,feature] == value], data[data[:,feature] != value]
+    
+    def majority_class(self, data:np.ndarray) -> int:
+        """
+        Returns the majority class of the data.
+
+            Parameters:
+                data (np.ndarray): The data.
+
+            Returns:
+                int: The majority class of the data.
+        """
+        counts = np.bincount(data.astype(int))
+        return np.argmax(counts)
+    
+    def build_tree(self, data:np.ndarray, root:Node=None, credal_joint:np.ndarray=None) -> Node:
+        """
+        Builds the decision tree.
+
+            Parameters:
+                data (np.ndarray): The data.
+                root (Node): The root node of the decision tree.
+                credal_joint (np.ndarray): The credal joint.
+
+            Returns:
+                Node: The root node of the decision tree.
+        """
+        root = Node() if root is None else root
+        credal_joint = CredalJoint(data, self.s, self.max_iter, self.base) if credal_joint is None else credal_joint
+        if len(np.unique(data[:,-1])) == 1:
+            root.label = data[0,-1]
+            return root
+        else:
+            best_features = self.best_split(credal_joint)
+            if len(best_features) > 1:
+                best_features = np.random.choice(best_features, 1)
+                root.feature = best_features[0]
+                root.value = best_features[1]
+                left_data, right_data = self.partition(data, root.feature, root.value)
+                if left_data.shape[0] == 0 or right_data.shape[0] == 0:
+                    root.label = self.majority_class(data[:,-1])
+                    return root
+                else:
+                    left_child = Node()
+                    right_child = Node()
+                    root.left = self.build_tree(left_data, left_child, credal_joint)
+                    root.right = self.build_tree(right_data, right_child, credal_joint)
+            else:
+                best_features = best_features[0]
+                root.feature = best_features[0]
+                root.value = best_features[1]
+                left_data, right_data = self.partition(data, root.feature, root.value)
+                if left_data.shape[0] == 0 or right_data.shape[0] == 0:
+                    root.label = self.majority_class(data[:,-1])
+                    return root
+                else:
+                    left_child = Node()
+                    right_child = Node()
+                    root.left = self.build_tree(left_data, left_child, credal_joint)
+                    root.right = self.build_tree(right_data, right_child, credal_joint)
+        return root
+    
+    def fit(self, X:np.ndarray, y:np.ndarray) -> None:
+        """
+        Fits the decision tree to the data.
 
         Parameters:
-            data (np.ndarray): The data to split.
-            target (int): The index of the target column.
-            joint_feature_space (np.ndarray): The joint feature space.
-            s (int): The Imprecise Dirichlet Model parameter.
-            max_entropy (bool): If True, the split is based on the maximum entropy of the joint.
-        
-        Returns:
-            Node: The root node of the decision tree.
+            X (np.ndarray): The data.
+            y (np.ndarray): The class labels.
         """
-        return Node(self.credal_joint, self.target, self.lower_ig, self.threshold)
-        
+        y = y.reshape(-1,1)
+        data = np.concatenate((X,y), axis=1)
+        self.root = self.build_tree(data)
+                
     def predict_single(self, node:Node, sample:np.ndarray) -> int:
         """
         Predicts the class label of a given sample.
@@ -230,13 +161,14 @@ class DecisionTree():
         if node.label is not None:
             return node.label
         else:
-            print(node.feature)
-            print(sample)
-            print(node.children)
-            child_node = node.children[sample[node.feature]]
-            return self.predict_single(child_node, np.delete(sample, node.feature))
+            index = node.feature
+            value = node.value
+            if sample[index] == value:
+                return self.predict_single(node.left, sample)
+            else:
+                return self.predict_single(node.right, sample)
     
-    def predict(self, node:Node, samples:np.ndarray) -> np.ndarray:
+    def predict(self, samples:np.ndarray, node:Node=None) -> np.ndarray:
         """
         Predicts the class labels of given samples.
 
@@ -247,12 +179,13 @@ class DecisionTree():
         Returns:
             np.ndarray: The predicted class labels of the samples.
         """
+        node = self.root if node is None else node
         output = []
         for sample in samples:
             output.append(self.predict_single(node, sample))
         return np.array(output)
 
-    def get_depth(self, node:Node) -> int:
+    def get_depth(self, node:Node=None) -> int:
         """
         Returns the depth of the decision tree.
 
@@ -262,10 +195,12 @@ class DecisionTree():
         Returns:
             int: The depth of the decision tree.
         """
-        if node.children == []:
+        if node is None:
+            node = self.root
+        if node.left is None and node.right is None:
             return 1
         else:
-            max_depth = 0
-            for child in node.children:
-                max_depth = max(max_depth, self.get_depth(child))
-            return max_depth + 1
+            return 1 + max(self.get_depth(node.left), self.get_depth(node.right))
+    
+
+            
