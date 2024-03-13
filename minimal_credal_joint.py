@@ -47,8 +47,8 @@ class CredalJoint():
     def fit(self, x:np.ndarray, y:np.ndarray, threshold:float) -> None:
         x = x > threshold
         x = x.astype(int)
-        x_values = np.unique(x)
-        y_values = np.unique(y)
+        x_values = np.unique(x[~np.isnan(x)])
+        y_values = np.unique(y[~np.isnan(y)])
         joint_space = np.transpose([np.tile(x_values, len(y_values)), np.repeat(y_values, len(x_values))])
         lb = self.lower_bound(np.column_stack((x, y)), joint_space)
         ub = self.upper_bound(np.column_stack((x, y)), joint_space)
@@ -57,37 +57,50 @@ class CredalJoint():
         self.min_entropy_joint = min_entropy
         self.joint_space = joint_space
 
-    def marginal(self, target: bool = True):
+    def marginal(self, target: bool = True, complement: bool = False):
         index = 1 if target else 0
         values = np.unique(self.joint_space[:, index])
         p_y_max = np.zeros(len(np.unique(self.joint_space[:, index])))
         p_y_min = np.zeros(len(np.unique(self.joint_space[:, index])))
+        p_y_max_comp = np.zeros(len(np.unique(self.joint_space[:, index])))
+        p_y_min_comp = np.zeros(len(np.unique(self.joint_space[:, index])))
         for idx, i in enumerate(values):
             mask = self.joint_space[:, index] == i
             p_y_max[idx] = np.sum(self.max_entropy_joint[mask])
             p_y_min[idx] = np.sum(self.min_entropy_joint[mask])
-        return values, p_y_max, p_y_min
+            p_y_max_comp[idx] = np.sum(self.max_entropy_joint[~mask])
+            p_y_min_comp[idx] = np.sum(self.min_entropy_joint[~mask])
+        if complement:
+            return values, p_y_max, p_y_min, p_y_max_comp, p_y_min_comp
+        else:
+            return values, p_y_max, p_y_min
+    
+    def joint(self, x_val: int, y_val: int):
+        mask = (self.joint_space[:, 0] == x_val) & (self.joint_space[:, 1] == y_val)
+        return self.max_entropy_joint[mask], self.min_entropy_joint[mask]
 
     def conditional(self, value: int, complement: bool = False):
-        mask = self.joint_space[:, 0] == value
-        comp_mask = self.joint_space[:, 0] != value
-        p_y_x_max = np.zeros(len(np.unique(self.joint_space[:, 1])))
-        p_y_x_min = np.zeros(len(np.unique(self.joint_space[:, 1])))
-        p_y_x_max_comp = np.ones(len(np.unique(self.joint_space[:, 1])))
-        p_y_x_min_comp = np.ones(len(np.unique(self.joint_space[:, 1])))
-        for idx, i in enumerate(np.unique(self.joint_space[:, 1])):
-            mask_y = self.joint_space[:, 1] == i
-            p_y_x_max[idx] = np.sum(self.max_entropy_joint[mask & mask_y])
-            p_y_x_min[idx] = np.sum(self.min_entropy_joint[mask & mask_y])
-            p_y_x_max_comp[idx] = np.sum(self.max_entropy_joint[comp_mask & mask_y])
-            p_y_x_min_comp[idx] = np.sum(self.min_entropy_joint[comp_mask & mask_y])
-        p_y_x_max = p_y_x_max / self.marginal(False)[1][np.where(self.marginal(False)[0] == value)[0]]
-        p_y_x_min = p_y_x_min / self.marginal(False)[2][np.where(self.marginal(False)[0] == value)[0]]
-        p_y_x_max_comp = p_y_x_max_comp / (1 - self.marginal(False)[1][np.where(self.marginal(False)[0] == value)[0]])
-        p_y_x_min_comp = p_y_x_min_comp / (1 - self.marginal(False)[2][np.where(self.marginal(False)[0] == value)[0]])
+        comp_value = np.abs(value - 1)
+        y_values = np.unique(self.joint_space[:, 1])
+        p_y_given_x_max = np.zeros(len(y_values))
+        p_y_given_x_min = np.zeros(len(y_values))
+        p_y_given_x_max_comp = np.zeros(len(y_values))
+        p_y_given_x_min_comp = np.zeros(len(y_values))
+        x_values, p_x_max, p_x_min, p_x_max_comp, p_x_min_comp = self.marginal(False, True)
+        for idx, y_val in enumerate(y_values):
+            p_y_given_x_max[idx], p_y_given_x_min[idx] = self.joint(value, y_val)
+            p_y_given_x_max[idx] /= p_x_max[np.where(x_values == value)[0]]
+            p_y_given_x_min[idx] /= p_x_min[np.where(x_values == value)[0]]
+            if comp_value in x_values:
+                p_y_given_x_max_comp[idx], p_y_given_x_min_comp[idx] = self.joint(comp_value, y_val)
+                p_y_given_x_max_comp[idx] /= p_x_max_comp[np.where(x_values == comp_value)[0]]
+                p_y_given_x_min_comp[idx] /= p_x_min_comp[np.where(x_values == comp_value)[0]]
+            else:
+                p_y_given_x_max_comp[idx] = 0
+                p_y_given_x_min_comp[idx] = 0
         if complement:
-            return p_y_x_max, p_y_x_min, p_y_x_max_comp, p_y_x_min_comp
-        return p_y_x_max, p_y_x_min
+            return p_y_given_x_max, p_y_given_x_min, p_y_given_x_max_comp, p_y_given_x_min_comp
+        return p_y_given_x_max, p_y_given_x_min
     
     def information_gain(self, value:int):
         _, p_y_max, p_y_min = self.marginal()

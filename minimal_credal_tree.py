@@ -40,13 +40,19 @@ class DecisionTree():
             return left_X, right_X, left_y, right_y
       
       def majority_class(self, y:np.ndarray) -> int:
-            counts = np.bincount(y.astype(int))
+            y_copy = y.copy()
+            y_copy = y_copy[~np.isnan(y_copy)]
+            y_copy = y_copy.reshape(-1)
+            counts = np.bincount(y_copy.astype(int))
             return np.argmax(counts)
 
-      def build_tree(self, X:np.ndarray, y:np.ndarray, root:Node=None):
+      def build_tree(self, X:np.ndarray, y:np.ndarray, root:Node=None, depth:int=0) -> Node:
             root = Node() if root is None else root
-            if len(np.unique(y)) == 1:
-                  root.label = y[0]
+            if depth >= 100:
+                  root.label = self.majority_class(y)
+                  return root
+            elif len(np.unique(y[~np.isnan(y)])) == 1:
+                  root.label = self.majority_class(y)
                   return root
             else:
                   best_lb = -np.inf
@@ -57,12 +63,14 @@ class DecisionTree():
                   idx_y = np.hstack( (idx, y) )
                   idx_y = idx_y[idx_y[:,1].argsort()]
                   thresholds_idx = []
-                  for v in np.unique(y):
+                  values = np.unique(y[~np.isnan(y)]).astype(int)
+                  for v in values:
                         idx_v = np.where(idx_y[:,1] == v)[0][0]
                         idx_t = idx_y[idx_v, 0]
                         thresholds_idx.append(idx_t)
                   for feature in range(X.shape[1]):
                         for idx in thresholds_idx:
+                              idx = int(idx)
                               v = X[idx, feature]
                               credal_joint = CredalJoint(self.s, self.maxiter, self.base)
                               credal_joint.fit(X[:,feature], y, v)
@@ -77,31 +85,35 @@ class DecisionTree():
                                     best_feature = [i for i in best_feature if i[3] >= best_lb]
                               else:
                                     continue
+                  best_feature = [] if best_lb == 0 else best_feature
                   if len(best_feature) > 1:
                         best_feature = max(best_feature, key=lambda x: x[2])
                         root.feature = best_feature[0]
                         root.value = best_feature[1]
                         left_X, right_X, left_y, right_y = self.partition(X, y, root.feature, root.value)
-                        if left_X.shape[0] == 0 or right_X.shape[0] == 0:
+                        if len(left_y[~np.isnan(left_y)]) == 0 or len(right_y[~np.isnan(right_y)]) == 0:
                               root.label = self.majority_class(y)
                               return root
                         else:
                               left_child = Node()
                               right_child = Node()
-                              root.left = self.build_tree(left_X, left_y, left_child)
-                              root.right = self.build_tree(right_X, right_y, right_child)
+                              root.left = self.build_tree(left_X, left_y, left_child, depth+1)
+                              root.right = self.build_tree(right_X, right_y, right_child, depth+1)
+                  elif len(best_feature) == 0:
+                        root.label = self.majority_class(y)
+                        return root
                   else:
                         root.feature = best_feature[0][0]
                         root.value = best_feature[0][1]
                         left_X, right_X, left_y, right_y = self.partition(X, y, root.feature, root.value)
-                        if left_X.shape[0] == 0 or right_X.shape[0] == 0:
+                        if len(left_y[~np.isnan(left_y)]) == 0 or len(right_y[~np.isnan(right_y)]) == 0:
                               root.label = self.majority_class(y)
                               return root
                         else:
                               left_child = Node()
                               right_child = Node()
-                              root.left = self.build_tree(left_X, left_y, left_child)
-                              root.right = self.build_tree(right_X, right_y, right_child)
+                              root.left = self.build_tree(left_X, left_y, left_child, depth+1)
+                              root.right = self.build_tree(right_X, right_y, right_child, depth+1)
             return root
 
       def fit(self, X:np.ndarray, y:np.ndarray) -> None:
